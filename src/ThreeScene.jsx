@@ -394,7 +394,7 @@ export default function ThreeScene() {
         <div className="hud">
           <span>Recoil Trainer</span>
           <span>{locked ? 'LIVE' : 'PAUSED'}</span>
-          <span className="precision-chip" style={{ marginLeft: '16px', color: '#00ff80' }}>
+          <span className="precision-chip" style={precision == null ? { marginLeft: '16px', color: '#ccc' } : precision < 40 ? { marginLeft: '16px', color: '#ff2600' } : precision < 80 ? { marginLeft: '16px', color: '#fffb00' } : { marginLeft: '16px', color: '#00ff80' }}>
             Accuracy: {precision == null ? '...' : `${precision}%`}
           </span>
         </div>
