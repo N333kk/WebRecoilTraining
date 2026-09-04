@@ -25,6 +25,7 @@ export default function ThreeScene() {
   const clearImpactsRef = useRef(null)
 
   const keysRef = useRef({ w: false, a: false, s: false, d: false })
+  const movingRef = useRef(false)
 
   const {
     weaponKey,
@@ -53,11 +54,15 @@ export default function ThreeScene() {
   } = useTrainingGame(WEAPONS, 'ak47')
 
   const [enableCameraRecoil, setEnableCameraRecoil] = useState(true)
+  const [fireSpread, setFireSpread] = useState(false)
+  const [movementSpread, setMovementSpread] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sensitivityDraft, setSensitivityDraft] = useState(String(sensitivity))
   const [fovAspect, setFovAspect] = useState('4:3')
   const [fov, setFov] = useState(FOV_PRESETS['4:3'].degrees)
   const cameraRecoilRef = useRef(enableCameraRecoil)
+  const fireSpreadRef = useRef(fireSpread)
+  const movementSpreadRef = useRef(movementSpread)
   const sensitivityRef = useRef(sensitivity)
   const fovRef = useRef(fov)
   const weaponKeyRef = useRef(weaponKey)
@@ -66,6 +71,8 @@ export default function ThreeScene() {
 
   useEffect(() => {
     cameraRecoilRef.current = enableCameraRecoil
+    fireSpreadRef.current = fireSpread
+    movementSpreadRef.current = movementSpread
     sensitivityRef.current = sensitivity
     fovRef.current = fov
     weaponKeyRef.current = weaponKey
@@ -147,15 +154,20 @@ export default function ThreeScene() {
       sceneApi.clearImpacts()
 
       const shootTick = () => {
-        const result = fireShot()
+        const baseInaccuracyDeg = (fireSpreadRef.current ? weapon.standingInaccuracyDeg : 0)
+          + (movementSpreadRef.current && movingRef.current ? weapon.movingInaccuracyDeg : 0)
+        const result = fireShot({
+          baseInaccuracyDeg,
+          applyFireSpread: fireSpreadRef.current
+        })
         if (result.empty) {
           releaseFire()
           return
         }
 
         const point = result.patternPoint
-        const bulletPitchRad = aimRef.current.pitch + (point.y * Math.PI) / 180
-        const bulletYawRad = aimRef.current.yaw + (point.x * Math.PI) / 180
+        const bulletPitchRad = aimRef.current.pitch + ((point.y + result.spreadOffset.y) * Math.PI) / 180
+        const bulletYawRad = aimRef.current.yaw + ((point.x + result.spreadOffset.x) * Math.PI) / 180
         
         const bulletEuler = new THREE.Euler(bulletPitchRad, bulletYawRad, 0, 'YXZ')
         const bulletDir = new THREE.Vector3(0, 0, -1).applyEuler(bulletEuler)
@@ -361,7 +373,10 @@ export default function ThreeScene() {
       aimRef.current.punchPitch = THREE.MathUtils.damp(aimRef.current.punchPitch, 0, 20, deltaTime)
       aimRef.current.punchYaw = THREE.MathUtils.damp(aimRef.current.punchYaw, 0, 20, deltaTime)
       
-      const speed = 9 * deltaTime
+      // CS2 rifles move at roughly 215 game units/second.  One scene unit is
+      // treated as ten game units, preserving the room scale while matching
+      // that pace (21.5 scene units/second).
+      const speed = 21.5 * deltaTime
       const dir = new THREE.Vector3()
       
       const yawEuler = new THREE.Euler(0, aimRef.current.yaw, 0, 'YXZ')
@@ -374,12 +389,13 @@ export default function ThreeScene() {
       if (keysRef.current.d) dir.add(right)
 
       if (dir.lengthSq() > 0) {
+        movingRef.current = true
         dir.normalize().multiplyScalar(speed)
         sceneApi.camera.position.add(dir)
         
         sceneApi.camera.position.x = THREE.MathUtils.clamp(sceneApi.camera.position.x, -29, 29)
         sceneApi.camera.position.z = THREE.MathUtils.clamp(sceneApi.camera.position.z, -29, 29)
-      }
+      } else movingRef.current = false
 
       // Apply recoil to the camera based on toggle (CS2 style view kick = 50%)
       const viewRecoilScale = cameraRecoilRef.current ? 0.5 : 0.0
@@ -470,8 +486,8 @@ export default function ThreeScene() {
       </div>
 
       <div className="control-bar">
-        <span>{getCurrentWeapon().label} / RDS {shots}/{currentWeapon.mag}</span>
-        <span>Shoot the panel to select a recoil pattern</span>
+        <span>{getCurrentWeapon().label} / RND {shots}/{currentWeapon.mag}</span>
+        <span>Use the panel to select a recoil pattern</span>
       </div>
 
       {settingsOpen && (
@@ -481,15 +497,15 @@ export default function ThreeScene() {
           <section className="settings-menu" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <div className="settings-heading">
               <div>
-                <p className="eyebrow">CONFIGURACIÓN</p>
-                <h2 id="settings-title">Ajustes de entrenamiento</h2>
+                <p className="eyebrow">SETTINGS</p>
+                <h2 id="settings-title">Training settings</h2>
               </div>
-              <button type="button" className="settings-close" onClick={closeSettings} aria-label="Cerrar ajustes">×</button>
+              <button type="button" className="settings-close" onClick={closeSettings} aria-label="Close settings">×</button>
             </div>
 
             <label className="settings-field">
-              <span>Sensibilidad</span>
-              <small>CS2 · precisión de 2 decimales</small>
+              <span>Sensitivity</span>
+              <small>CS2 · two-decimal precision</small>
               <input
                 type="number"
                 min="0.10"
@@ -503,8 +519,8 @@ export default function ThreeScene() {
             </label>
 
             <label className="settings-field">
-              <span>Formato y FOV</span>
-              <small>FOV horizontal equivalente de CS2 (4:3 = 90°)</small>
+              <span>Aspect ratio &amp; FOV</span>
+              <small>CS2-equivalent horizontal FOV (4:3 = 90°)</small>
               <select
                 value={fovAspect}
                 onChange={(event) => {
@@ -521,10 +537,20 @@ export default function ThreeScene() {
 
             <label className="settings-toggle">
               <input type="checkbox" checked={enableCameraRecoil} onChange={(event) => setEnableCameraRecoil(event.target.checked)} />
-              <span>Retroceso de cámara estilo CS2</span>
+              <span>CS2-style camera recoil</span>
             </label>
 
-            <p className="settings-hint">Pulsa <strong>Y</strong> o <strong>ESC</strong> para cerrar · vacío = sensibilidad 1.00</p>
+            <label className="settings-toggle">
+              <input type="checkbox" checked={fireSpread} onChange={(event) => setFireSpread(event.target.checked)} />
+              <span>Firing spread</span>
+            </label>
+
+            <label className="settings-toggle">
+              <input type="checkbox" checked={movementSpread} onChange={(event) => setMovementSpread(event.target.checked)} />
+              <span>Movement spread</span>
+            </label>
+
+            <p className="settings-hint">Press <strong>Y</strong> or <strong>ESC</strong> to close · blank = sensitivity 1.00</p>
           </section>
         </div>
       )}

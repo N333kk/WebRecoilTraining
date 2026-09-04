@@ -8,10 +8,10 @@ export function buildCompensationPattern(weapon) {
       return Array.from({ length: weapon.mag }, () => ({ x: clean[0].x, y: clean[0].y }))
     }
     if (clean.length === weapon.mag) {
-      return clean
+      return normalizePatternToReference(clean, weapon)
     }
     if (clean.length >= 2) {
-      return resample(clean, Math.max(1, weapon.mag))
+      return normalizePatternToReference(resample(clean, Math.max(1, weapon.mag)), weapon)
     }
   }
 
@@ -30,6 +30,25 @@ export function buildCompensationPattern(weapon) {
   }
 
   return points
+}
+
+// The stored points describe the trace shape.  Published CS2 spray references
+// report total height and width, so scale the trace to those measured bounds
+// without changing its per-shot timing or the compensation direction.
+function normalizePatternToReference(points, weapon) {
+  const height = weapon.recoilMaxVerticalDeg
+  const width = weapon.recoilWidthDeg
+  const maxY = Math.max(...points.map((p) => p.y))
+  const minX = Math.min(...points.map((p) => p.x))
+  const maxX = Math.max(...points.map((p) => p.x))
+  const scaleY = Number.isFinite(height) && maxY > 0 ? height / maxY : 1
+  const scaleX = Number.isFinite(width) && maxX > minX ? width / (maxX - minX) : 1
+  const directionX = weapon.patternMirrorX ? -1 : 1
+
+  return points.map((p) => ({
+    x: p.x * scaleX * directionX,
+    y: p.y * scaleY
+  }))
 }
 
 export function resample(points, n) {
