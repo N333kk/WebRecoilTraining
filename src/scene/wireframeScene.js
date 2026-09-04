@@ -101,11 +101,12 @@ export function createWireframeScene({ mount, overlay }) {
   uiTexture.generateMipmaps = false
 
   const uiMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(16, 16),
+    new THREE.PlaneGeometry(10, 6),
     new THREE.MeshBasicMaterial({ map: uiTexture, transparent: true })
   )
-  // Place on the front wall to the left of the diana
-  uiMesh.position.set(-16, 2.0, -29.8)
+  uiMesh.visible = true
+  // Place the compact pattern selector on the front wall to the left of the target.
+  uiMesh.position.set(-12, 1.5, -29.8)
   scene.add(uiMesh)
 
   let uiButtons = []
@@ -122,11 +123,11 @@ export function createWireframeScene({ mount, overlay }) {
     uiCtx.font = 'bold 44px ui-monospace, monospace'
     uiCtx.textAlign = 'center'
     uiCtx.textBaseline = 'top'
-    uiCtx.fillText('CONTROL PANEL (SHOOT TO SELECT)', 512, 40)
+    uiCtx.fillText('RECOIL PATTERNS', 512, 34)
     
     uiCtx.beginPath()
-    uiCtx.moveTo(0, 110)
-    uiCtx.lineTo(1024, 110)
+    uiCtx.moveTo(0, 92)
+    uiCtx.lineTo(1024, 92)
     uiCtx.stroke()
 
     uiButtons = []
@@ -151,33 +152,21 @@ export function createWireframeScene({ mount, overlay }) {
     uiCtx.textAlign = 'left'
     uiCtx.font = 'bold 36px ui-monospace, monospace'
     uiCtx.textBaseline = 'bottom'
-    uiCtx.fillText('Arma:', 50, 180)
+    uiCtx.fillText('WEAPON', 50, 150)
     const weapons = ['ak47', 'm4a4', 'galil', 'famas', 'mac10']
     weapons.forEach((wKey, i) => {
-      const col = i % 4
-      const row = Math.floor(i / 4)
-      drawBtn(50 + col * 220, 200 + row * 100, 200, 80, wKey.toUpperCase(), `weapon_${wKey}`, state.weaponKey === wKey)
+      const col = i % 3
+      const row = Math.floor(i / 3)
+      drawBtn(50 + col * 315, 175 + row * 105, 280, 82, wKey.toUpperCase(), `weapon_${wKey}`, state.weaponKey === wKey)
     })
 
-    // Camera Recoil
-    uiCtx.fillStyle = '#ffffff'
-    uiCtx.textAlign = 'left'
-    uiCtx.fillText('Retroceso de Cámara (Modo CS2):', 50, 480)
-    drawBtn(50, 500, 200, 80, 'ACTIVADO', 'recoil_on', state.enableCameraRecoil === true)
-    drawBtn(270, 500, 200, 80, 'DESACTIVADO', 'recoil_off', state.enableCameraRecoil === false)
-
-    // Sensibilidad
-    uiCtx.fillStyle = '#ffffff'
-    uiCtx.textAlign = 'left'
-    uiCtx.fillText(`Sensibilidad: ${state.sensitivity.toFixed(2)}`, 50, 680)
-    drawBtn(50, 700, 100, 80, '-0.5', 'sens_down_large')
-    drawBtn(170, 700, 100, 80, '-0.1', 'sens_down_small')
-    drawBtn(290, 700, 100, 80, '+0.1', 'sens_up_small')
-    drawBtn(410, 700, 100, 80, '+0.5', 'sens_up_large')
-
     // Reset
-    drawBtn(50, 860, 450, 100, 'REINICIAR PATRÓN', 'reset_run')
-    drawBtn(524, 860, 450, 100, 'RESETEAR POSICIÓN', 'reset_pos')
+    drawBtn(50, 430, 450, 92, 'RESET PATTERN', 'reset_run')
+    drawBtn(524, 430, 450, 92, 'RESET POSITION', 'reset_pos')
+    uiCtx.fillStyle = '#aaaaaa'
+    uiCtx.font = 'bold 26px ui-monospace, monospace'
+    uiCtx.textAlign = 'center'
+    uiCtx.fillText('⚙ Y  OPEN SETTINGS', 512, 590)
 
     uiTexture.needsUpdate = true
   }
@@ -241,6 +230,9 @@ export function createWireframeScene({ mount, overlay }) {
     const h = mount.clientHeight || 560
     sizeRef.current = { w, h }
     camera.aspect = w / h
+    if (camera.userData.horizontalFov) {
+      camera.fov = (2 * Math.atan(Math.tan((camera.userData.horizontalFov * Math.PI) / 360) / camera.aspect) * 180) / Math.PI
+    }
     camera.updateProjectionMatrix()
     renderer.setSize(w, h, false)
     overlay.width = w
