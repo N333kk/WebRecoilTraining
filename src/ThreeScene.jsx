@@ -5,6 +5,17 @@ import { useTrainingGame } from './game/useTrainingGame'
 import { createWireframeScene, worldToScreen } from './scene/wireframeScene'
 
 const WEAPONS = weaponsData
+const FOV_PRESETS = {
+  '4:3': { label: '4:3', degrees: 90 },
+  '16:10': { label: '16:10', degrees: 100.39 },
+  '16:9': { label: '16:9', degrees: 106.26 }
+}
+
+function applyHorizontalFov(camera, horizontalFov) {
+  camera.userData.horizontalFov = horizontalFov
+  camera.fov = (2 * Math.atan(Math.tan((horizontalFov * Math.PI) / 360) / camera.aspect) * 180) / Math.PI
+  camera.updateProjectionMatrix()
+}
 
 export default function ThreeScene() {
   const mountRef = useRef(null)
@@ -42,24 +53,65 @@ export default function ThreeScene() {
   } = useTrainingGame(WEAPONS, 'ak47')
 
   const [enableCameraRecoil, setEnableCameraRecoil] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sensitivityDraft, setSensitivityDraft] = useState(String(sensitivity))
+  const [fovAspect, setFovAspect] = useState('4:3')
+  const [fov, setFov] = useState(FOV_PRESETS['4:3'].degrees)
   const cameraRecoilRef = useRef(enableCameraRecoil)
   const sensitivityRef = useRef(sensitivity)
+  const fovRef = useRef(fov)
   const weaponKeyRef = useRef(weaponKey)
+  const settingsOpenRef = useRef(settingsOpen)
   const sceneApiRef = useRef(null)
 
   useEffect(() => {
     cameraRecoilRef.current = enableCameraRecoil
     sensitivityRef.current = sensitivity
+    fovRef.current = fov
     weaponKeyRef.current = weaponKey
+    settingsOpenRef.current = settingsOpen
 
     if (sceneApiRef.current) {
+      applyHorizontalFov(sceneApiRef.current.camera, fov)
       sceneApiRef.current.renderUI({
         weaponKey,
         enableCameraRecoil,
         sensitivity
       })
     }
-  }, [enableCameraRecoil, sensitivity, weaponKey])
+  }, [enableCameraRecoil, fov, sensitivity, settingsOpen, weaponKey])
+
+  const closeSettings = () => {
+    const parsedSensitivity = Number(sensitivityDraft)
+    const nextSensitivity = sensitivityDraft.trim() === '' || !Number.isFinite(parsedSensitivity)
+      ? 1
+      : Math.min(10, Math.max(0.01, Math.round(parsedSensitivity * 100) / 100))
+    setSensitivity(nextSensitivity)
+    setSensitivityDraft(String(nextSensitivity))
+    setSettingsOpen(false)
+  }
+
+  useEffect(() => {
+    const onSettingsKey = (event) => {
+      if (!['KeyY', 'Escape'].includes(event.code)) return
+      event.preventDefault()
+      if (event.code === 'Escape' && !settingsOpenRef.current) return
+      if (settingsOpenRef.current) closeSettings()
+      else if (['INPUT', 'SELECT', 'TEXTAREA'].includes(event.target.tagName)) return
+      else {
+        setSensitivityDraft(sensitivityRef.current.toFixed(2))
+        setSettingsOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onSettingsKey)
+    return () => window.removeEventListener('keydown', onSettingsKey)
+  }, [closeSettings])
+
+  useEffect(() => {
+    if (!settingsOpen) return
+    if (document.pointerLockElement) document.exitPointerLock()
+    stopFiring()
+  }, [settingsOpen, stopFiring])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -69,6 +121,7 @@ export default function ThreeScene() {
     const sceneApi = createWireframeScene({ mount, overlay })
     sceneApiRef.current = sceneApi
     clearImpactsRef.current = sceneApi.clearImpacts
+    applyHorizontalFov(sceneApi.camera, fovRef.current)
     
     sceneApi.renderUI({ weaponKey: weaponKeyRef.current, enableCameraRecoil: cameraRecoilRef.current, sensitivity: sensitivityRef.current })
 
@@ -85,6 +138,7 @@ export default function ThreeScene() {
     }
 
     const raycaster = new THREE.Raycaster()
+    let previousFrameTime = performance.now()
 
     const startFire = () => {
       const weapon = beginFiring()
@@ -132,13 +186,17 @@ export default function ThreeScene() {
 
     const onMouseMove = (event) => {
       if (document.pointerLockElement !== mount) return
+      if (!Number.isFinite(event.movementX) || !Number.isFinite(event.movementY)) return
+      // Pointer-lock can report a stale, very large delta after a tab switch.
+      const movementX = THREE.MathUtils.clamp(event.movementX, -250, 250)
+      const movementY = THREE.MathUtils.clamp(event.movementY, -250, 250)
       const degPerCount = sensitivityRef.current * mYaw
       const radiansPerCount = (degPerCount * Math.PI) / 180
-      aimRef.current.yaw -= event.movementX * radiansPerCount
-      aimRef.current.pitch -= event.movementY * radiansPerCount
+      aimRef.current.yaw -= movementX * radiansPerCount
+      aimRef.current.pitch -= movementY * radiansPerCount
       aimRef.current.pitch = THREE.MathUtils.clamp(aimRef.current.pitch, -1.33, 1.33)
-      const compDegX = event.movementX * degPerCount
-      const compDegY = event.movementY * degPerCount
+      const compDegX = movementX * degPerCount
+      const compDegY = movementY * degPerCount
       recordMouseMovement(compDegX, compDegY)
     }
 
@@ -279,8 +337,11 @@ export default function ThreeScene() {
       }
     }
 
-    const animate = () => {
+    const animate = (frameTime = performance.now()) => {
       loopRef.current = requestAnimationFrame(animate)
+      const currentFrameTime = Number.isFinite(frameTime) ? frameTime : performance.now()
+      const deltaTime = THREE.MathUtils.clamp((currentFrameTime - previousFrameTime) / 1000, 0, 0.1)
+      previousFrameTime = currentFrameTime
 
       const isFiring = getIsFiring()
       const recoilSpeed = isFiring ? 28 : 8
@@ -288,19 +349,19 @@ export default function ThreeScene() {
         aimRef.current.recoilPitch,
         aimRef.current.recoilPitchTarget ?? 0,
         recoilSpeed,
-        1 / 60
+        deltaTime
       )
       aimRef.current.recoilYaw = THREE.MathUtils.damp(
         aimRef.current.recoilYaw,
         aimRef.current.recoilYawTarget ?? 0,
         recoilSpeed,
-        1 / 60
+        deltaTime
       )
 
-      aimRef.current.punchPitch = THREE.MathUtils.damp(aimRef.current.punchPitch, 0, 20, 1 / 60)
-      aimRef.current.punchYaw = THREE.MathUtils.damp(aimRef.current.punchYaw, 0, 20, 1 / 60)
+      aimRef.current.punchPitch = THREE.MathUtils.damp(aimRef.current.punchPitch, 0, 20, deltaTime)
+      aimRef.current.punchYaw = THREE.MathUtils.damp(aimRef.current.punchYaw, 0, 20, deltaTime)
       
-      const speed = 0.15
+      const speed = 9 * deltaTime
       const dir = new THREE.Vector3()
       
       const yawEuler = new THREE.Euler(0, aimRef.current.yaw, 0, 'YXZ')
@@ -334,6 +395,7 @@ export default function ThreeScene() {
 
     const onKeyDown = (e) => {
       const k = e.code
+      if (settingsOpenRef.current) return
       if (k === 'KeyW') keysRef.current.w = true
       if (k === 'KeyA') keysRef.current.a = true
       if (k === 'KeyS') keysRef.current.s = true
@@ -348,6 +410,11 @@ export default function ThreeScene() {
       if (k === 'KeyD') keysRef.current.d = false
     }
 
+    const onVisibilityChange = () => {
+      previousFrameTime = performance.now()
+      if (document.hidden) releaseFire()
+    }
+
     window.addEventListener('resize', sceneApi.resize)
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('pointerlockchange', onPointerLockChange)
@@ -355,6 +422,7 @@ export default function ThreeScene() {
     window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
     sceneApi.resize()
     animate()
@@ -369,6 +437,7 @@ export default function ThreeScene() {
       window.removeEventListener('mouseup', onMouseUp)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       sceneApi.dispose()
     }
   }, [
@@ -387,7 +456,7 @@ export default function ThreeScene() {
   ])
 
   return (
-    <div className="trainer">
+    <div className={`trainer${settingsOpen ? ' settings-open' : ''}`}>
       <div ref={mountRef} className="three-wrap">
         <canvas ref={overlayRef} className="overlay-canvas" />
         <div className="crosshair" aria-hidden="true">+</div>
@@ -402,8 +471,63 @@ export default function ThreeScene() {
 
       <div className="control-bar">
         <span>{getCurrentWeapon().label} / RDS {shots}/{currentWeapon.mag}</span>
-        <span>Shoot the panel to change CFG. Just shoot the target and GRIND.</span>
+        <span>Shoot the panel to select a recoil pattern</span>
       </div>
+
+      {settingsOpen && (
+        <div className="settings-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeSettings()
+        }}>
+          <section className="settings-menu" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div className="settings-heading">
+              <div>
+                <p className="eyebrow">CONFIGURACIÓN</p>
+                <h2 id="settings-title">Ajustes de entrenamiento</h2>
+              </div>
+              <button type="button" className="settings-close" onClick={closeSettings} aria-label="Cerrar ajustes">×</button>
+            </div>
+
+            <label className="settings-field">
+              <span>Sensibilidad</span>
+              <small>CS2 · precisión de 2 decimales</small>
+              <input
+                type="number"
+                min="0.10"
+                max="10.00"
+                step="0.01"
+                value={sensitivityDraft}
+                onChange={(event) => {
+                  setSensitivityDraft(event.target.value)
+                }}
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>Formato y FOV</span>
+              <small>FOV horizontal equivalente de CS2 (4:3 = 90°)</small>
+              <select
+                value={fovAspect}
+                onChange={(event) => {
+                  const nextAspect = event.target.value
+                  setFovAspect(nextAspect)
+                  setFov(FOV_PRESETS[nextAspect].degrees)
+                }}
+              >
+                {Object.entries(FOV_PRESETS).map(([aspect, preset]) => (
+                  <option key={aspect} value={aspect}>{preset.label} · {preset.degrees.toFixed(2)}° horizontal</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="settings-toggle">
+              <input type="checkbox" checked={enableCameraRecoil} onChange={(event) => setEnableCameraRecoil(event.target.checked)} />
+              <span>Retroceso de cámara estilo CS2</span>
+            </label>
+
+            <p className="settings-hint">Pulsa <strong>Y</strong> o <strong>ESC</strong> para cerrar · vacío = sensibilidad 1.00</p>
+          </section>
+        </div>
+      )}
     </div>
   )
 }
